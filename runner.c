@@ -1,35 +1,38 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <string.h>
 #include <stdbool.h>
 #include <unistd.h>
+#include <sys/inotify.h>
 
 #define FILE_SIZE (4096)
 
 char *map;
-int fd;
+int map_fd;
 long page_size, map_size;
+
+
 
 static int open_mmap(void)
 {
-    fd = open("/tmp/testFile", O_RDWR);
+    map_fd = open("/tmp/testFile", O_RDWR);
 
-    if(fd < 0) {
-        fprintf(stderr, "Error : can't open file\n");
-        return -1;
+    if(map_fd < 0) {
+        perror("open");
+        exit(EXIT_FAILURE);
     }
 
-    /* ページサイズからマッピング時のサイズを計算 */
     page_size = getpagesize();
     map_size = (FILE_SIZE / page_size + 1) * page_size;
 
-    /* メモリ上にマッピング。今回は文字列データとして扱えるようにする */
-    map = (char*)mmap(NULL, map_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    map = (char*)mmap(NULL, map_size, PROT_READ | PROT_WRITE,
+                      MAP_SHARED, map_fd, 0);
 
     if (mmap == MAP_FAILED) {
-        fprintf(stderr, "Error : mmap failed\n");
-        return -1;
+        perror("mmap");
+        exit(EXIT_FAILURE);
     }
 
     memset(map, 0, FILE_SIZE);
@@ -61,24 +64,53 @@ void dump(void *p, int size)
     printf("---\n");
 }
 
+int notify_fd;
+int watch_fd;
+
+void init_notify(void)
+{
+    notify_fd = inotify_init();
+    if (notify_fd == -1) {
+        perror("inotify_init");
+        exit(EXIT_FAILURE);
+    }
+    watch_fd = inotify_add_watch(notify_fd, "/tmp/testFile", IN_MODIFY);
+    //watch_fd = inotify_add_watch(fd, "/tmp/testFile", IN_ALL_EVENTS);
+    if (watch_fd == -1) {
+        perror("inotify_add_watch");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void close_notify(void)
+{
+    inotify_rm_watch( notify_fd, watch_fd );
+    close( notify_fd );
+}
+
 int main(int argc, char *argv[])
 {
     int err;
+    static char buffer[1];
 
     printf("beremetal runner\n");
-    /* ファイルの中身をはき出す */
 
     err = open_mmap();
     if (err)
         return 1;
 
+    init_notify();
+
 
     while (1) {
-        sleep(1);
+        read(notify_fd, buffer, sizeof(buffer));
         dump(map, FILE_SIZE);
+        exit(0);
     }
 
-    close(fd);
+    close_notify();
+
+    close(map_fd);
     munmap(map, map_size);
 
     return 0;
