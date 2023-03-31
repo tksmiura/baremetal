@@ -1,3 +1,3 @@
-# beremetal
+# baremetal
 
-beremetal test environment
+baremetal test environment
